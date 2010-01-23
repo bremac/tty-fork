@@ -34,7 +34,7 @@ int main(int argc, char **argv)
 
     socket = make_domain_client(argv[1]);
 
-    while(!transfer(STDIN_FILENO, socket)) ;   
+    while(transfer(STDIN_FILENO, socket, 0) > 0) ;   
 
     return EXIT_SUCCESS;
 }

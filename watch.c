@@ -43,6 +43,10 @@ void watch_fd(struct watched_fds *watcher, int fd)
 
     watcher->fds[watcher->len] = fd;
     watcher->len++;
+    
+    // Make sure the fd is not flagged.
+    FD_CLR(fd, &watcher->read_set);
+    FD_CLR(fd, &watcher->error_set);
 
     if(fd > watcher->highest)
         watcher->highest = fd;

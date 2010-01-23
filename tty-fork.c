@@ -121,23 +121,44 @@ void select_loop(int pty, int sock)
     while ((count = watch_for_data(watcher))) {
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
         FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
-        FORCE(!FD_ISSET(pty, &watcher->read_set),  "Terminal connection with data!?");
-        
+        FORCE(!FD_ISSET(pty, &watcher->read_set),   "Terminal connection with data!?");
+
+#define UNFLAG(fd) FD_CLR(fd, &watcher->error_set); \
+                   FD_CLR(fd, &watcher->read_set);  \
+                   count--;
+         
         if (FD_ISSET(sock, &watcher->read_set)) {
+            // XXX: Handle errors on accepting.
             new_fd = accept(sock, NULL, NULL);
             watch_fd(watcher, new_fd);
-            FD_CLR(sock, &watcher->read_set);
-            count--;
+            UNFLAG(sock);
         }
 
         for (i = 0; i < watcher->len && count > 0; i++) {
-            if (FD_ISSET(watcher->fds[i], &watcher->error_set))
+            if (FD_ISSET(watcher->fds[i], &watcher->error_set)) {
                 unwatch_fd(watcher, watcher->fds[i]);
+                UNFLAG(watcher->fds[i]);
+            }
+            
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
-                // XXX: Handle EOF gracefully (send it and continue working.)
-                FORCE(!transfer(watcher->fds[i], pty), "Unable to transfer IO.");
+                int ret = transfer(watcher->fds[i],
+                                   pty,
+                                   watcher->fds[i] != STDIN_FILENO);
+
+                FORCE(ret != -1, "Unable to transfer IO.");
+                
+                if (!ret) { // We have reached end-of-file.
+                    close(watcher->fds[i]);               // Invalidate the fd.
+                    unwatch_fd(watcher, watcher->fds[i]);
+
+                    // If the only fds left are the master socket and the
+                    // pseudo-terminal, then we're done.
+                    if (watcher->len == 2) exit(EXIT_SUCCESS);
+                }
+                UNFLAG(watcher->fds[i]);
             }
         }
+#undef UNFLAG
     }
 }
 
@@ -145,7 +166,7 @@ const char *USAGE = "Usage: tty-fork <path> <command> [arguments] ...";
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
+    if (argc < 3) {
         puts(USAGE);
         exit(1);
     }

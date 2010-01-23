@@ -11,6 +11,6 @@
     exit(1);                                \
 }
 
-size_t transfer(int from_fd, int to_fd);
+ssize_t transfer(int from_fd, int to_fd, int print);
 
 #endif
