@@ -39,9 +39,12 @@ int make_domain_socket(const char *path)
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
     FORCE(sock != -1, "Unable to create socket for IPC.");
 
+    addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, path, sizeof(addr.sun_path));
     retval = bind(sock, (struct sockaddr *)&addr, strlen(path) + sizeof(addr.sun_family));
-    FORCE(retval, "Unable to bind the IPC socket to the filesystem.");
+    FORCE(!retval, "Unable to bind the IPC socket to the filesystem.");
+
+    FORCE(!listen(sock, 5), "Unable to listen on socket.");
 
     return sock;
 }
@@ -93,7 +96,6 @@ void select_loop(int pty, int sock)
     struct watched_fds *watcher = new_watcher();
     char read_buffer[READ_BUFFER_LEN];
 
-    FORCE(listen(sock, 5) == 0, "Unable to listen on socket.");
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
