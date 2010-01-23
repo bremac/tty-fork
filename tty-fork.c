@@ -6,6 +6,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <termios.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include "watch.h"
@@ -26,9 +27,9 @@ void cleanup()
     unlink(socket_path); // Prevent invalid dangling files.
 }
 
-void sigchld(int s)
+void sigexit(int s)
 {
-    exit(0);
+    exit(EXIT_SUCCESS);
 }
 
 int make_domain_socket(const char *path)
@@ -52,7 +53,6 @@ int make_domain_socket(const char *path)
 int forkpty(int argc, char **args)
 {
     int pty;
-    char *ptyname;
     
     FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
     
@@ -60,27 +60,50 @@ int forkpty(int argc, char **args)
     FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
     
     FORCE(!grantpt(pty) && !unlockpt(pty), "Unable to release pseudo-terminal.");
-   
+  
+    // XXX: Catch errors when forking. 
     if(fork() == 0) {
-        ptyname = ptsname(pty); 
-        FORCE(ptyname != NULL, "Could not open a pseudo-terminal slave.");
-    
-        pty = open(ptyname, O_RDWR);
-        FORCE(pty, "Could not access the terminal slave.");
-
         // This is the child process. Clone the arguments and call execvp.
         char **argv = malloc(sizeof(char*) * (argc + 1));
+        char *ptyname;
+        int pgroup;
+        struct termios tc;
 
         FORCE(argv != NULL, "Unable to allocate memory.");
         memmove(argv, args, sizeof(char*) * argc);
         argv[argc] = NULL; // Terminate the vector of arguments.
+
+        ptyname = ptsname(pty); 
+        FORCE(ptyname != NULL, "Could not open a pseudo-terminal slave.");
+        close(pty);
+
+        pty = open(ptyname, O_RDWR);
+        FORCE(pty, "Could not access the terminal slave.");
         
-        dup2(pty, 0);      // Replace stdin/stdout with the pseudo-tty.
-        dup2(pty, 1);
+        dup2(pty, STDIN_FILENO); // Replace stdin with the pseudo-tty.
+
+//        pgroup = setsid();
+//        FORCE(pgroup > -1, "Could not create a new session.");
+//        FORCE(tcsetpgrp(0, pgroup) != -1, "Could not set the process to the foreground.");
+
+        tc.c_lflag = ISIG | ICANON | ECHOE | ECHOK | /*ECHOCTL | ECHOKE |*/ IEXTEN;
+        tc.c_oflag = TABDLY | OPOST;
+        tc.c_iflag = BRKINT | IGNPAR | ISTRIP | ICRNL | IXON | IMAXBEL;
+        tc.c_cflag = /*CBAUD |*/ CS8 | CREAD;
+        tc.c_lflag &= ~ECHO;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &tc);
          
         execvp(argv[0], argv);
         FORCE(0, "Unable to execute slave process.");
-    } else signal(SIGCHLD, sigchld);
+    } else {
+        signal(SIGCHLD, sigexit);
+        signal(SIGABRT, sigexit);
+        signal(SIGKILL, sigexit);
+        signal(SIGTERM, sigexit);
+        signal(SIGSEGV, sigexit);
+        signal(SIGILL,  sigexit);
+        signal(SIGINT,  sigexit);
+    }
 
     return pty;
 }
@@ -96,12 +119,14 @@ void select_loop(int pty, int sock)
     struct watched_fds *watcher = new_watcher();
     char read_buffer[READ_BUFFER_LEN];
 
+    watch_fd(watcher, STDIN_FILENO);
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
     while ((count = watch_for_data(watcher))) {
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
         FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
+        FORCE(!FD_ISSET(pty, &watcher->read_set),  "Terminal connection with data!?");
         
         if (FD_ISSET(sock, &watcher->read_set)) {
             new_fd = accept(sock, NULL, NULL);
@@ -114,9 +139,10 @@ void select_loop(int pty, int sock)
             if (FD_ISSET(watcher->fds[i], &watcher->error_set))
                 unwatch_fd(watcher, watcher->fds[i]);
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
+                // XXX: Handle EOF gracefully (send it and continue working.)
                 len = read(watcher->fds[i], read_buffer, READ_BUFFER_LEN);
                 FORCE(len > 0, "Failed read from socket.");
-                len = write(1, read_buffer, len);
+                len = write(pty, read_buffer, len);
                 FORCE(len > 0, "Failed write to terminal.");
             }
         }
@@ -134,7 +160,6 @@ int main(int argc, char **argv)
 
     socket_path = argv[1];
     socket_fd   = make_domain_socket(argv[1]);
-    
     pty_fd      = forkpty(argc - 2, argv + 2); // Skip the command and socket path.
 
     atexit(cleanup);
@@ -142,5 +167,5 @@ int main(int argc, char **argv)
     select_loop(pty_fd, socket_fd);
     // XXX: Should not be reached.
 
-    return EXIT_SUCCESS;
+    exit(EXIT_SUCCESS);
 }
