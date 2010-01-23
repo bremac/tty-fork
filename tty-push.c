@@ -26,9 +26,8 @@ const char *USAGE = "Usage: tty-push <path>";
 int main(int argc, char **argv)
 {
     int socket;
-    char read_buffer[READ_BUFFER_LEN];
 
-    if (argv < 2) {
+    if (argc < 2) {
         puts(USAGE);
         exit(1);
     }

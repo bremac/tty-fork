@@ -69,9 +69,12 @@ int forkpty(int argc, char **args)
         int pgroup;
         struct termios tc;
 
+        // Duplicate the master terminal's settings.
+        tcgetattr(STDIN_FILENO, &tc);
+        
         FORCE(argv != NULL, "Unable to allocate memory.");
         memmove(argv, args, sizeof(char*) * argc);
-        argv[argc] = NULL; // Terminate the vector of arguments.
+        argv[argc] = NULL; // Null-terminate the vector of arguments.
 
         ptyname = ptsname(pty); 
         FORCE(ptyname != NULL, "Could not open a pseudo-terminal slave.");
@@ -86,11 +89,7 @@ int forkpty(int argc, char **args)
 //        FORCE(pgroup > -1, "Could not create a new session.");
 //        FORCE(tcsetpgrp(0, pgroup) != -1, "Could not set the process to the foreground.");
 
-        // XXX: Duplicate the settings of the master terminal, less the echo.
-        tc.c_lflag = ISIG | ICANON | ECHOE | ECHOK | /*ECHOCTL | ECHOKE |*/ IEXTEN;
-        tc.c_oflag = TABDLY | OPOST;
-        tc.c_iflag = BRKINT | IGNPAR | ISTRIP | ICRNL | IXON | IMAXBEL;
-        tc.c_cflag = /*CBAUD |*/ CS8 | CREAD;
+        // Make the pseudo-terminal mimic the master, minus any echo.
         tc.c_lflag &= ~ECHO;
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &tc);
          
