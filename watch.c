@@ -1,0 +1,100 @@
+#include <sys/select.h>
+#include "watch.h"
+
+struct watched_fds *new_watcher()
+{
+    struct watched_fds *watcher = malloc(sizeof(struct watched_fds));
+
+    FORCE(watcher != NULL, "Unable to allocate memory.")
+
+    FD_ZERO(&watcher->read_set);
+    FD_ZERO(&watcher->error_set);
+
+    watcher->max = 8;
+    watcher->len = 0;
+    watcher->highest = -1;
+    watcher->fds = malloc(sizeof(int) * watcher->max);
+
+    FORCE(watcher->fds != NULL, "Unable to allocate memory.");
+
+    return watcher;
+}
+
+void free_watcher(struct watched_fds *watcher)
+{
+    free(watcher->fds);
+    free(watcher);
+}
+
+void watch_fd(struct watched_fds *watcher, int fd)
+{
+    int *fds;
+
+    // Allocate more space if we need it.
+    if(watcher->len == watcher->max) {
+        watcher->max *= 2;
+        fds = malloc(sizeof(int) * watcher->max);
+        
+        FORCE(fds != NULL, "Unable to allocate memory.");
+    }
+
+    watcher->fds[watcher->len] = fd;
+    watcher->len++;
+
+    if(fd > watcher->highest)
+        watcher->highest = fd;
+}
+
+int unwatch_fd(struct watched_fds *watcher, int fd)
+{
+    unsigned int i;
+
+    for (i = 0; i < watcher->len; i++) {
+        if (watcher->fds[i] == fd) {
+            // If this is the only element being watched, then the following is
+            // wasted effort; however the code is easier to understand and the
+            // assignment should be practically a no-op anyway.
+            watcher->fds[i] = watcher->fds[watcher->len];
+            watcher->len--;
+
+            // Make sure the fd is no longer flagged.
+            FD_CLR(&watcher->read_set);
+            FD_CLR(&watcher->error_set);
+
+            if (watcher->highest == fd) {
+                // Find the new highest file descriptor.
+                watcher->highest = -1;
+                for (i = 0; i < watcher->len; i++)
+                    if (watcher->fds[i] > watcher->highest)
+                        watcher->highest = watcher->fds[i];
+            }
+
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+void watch_for_data(struct watched_fds *watcher)
+{
+    unsigned int i;
+    int retval = -1;
+    
+    FD_ZERO(&watcher->set);
+
+    for(i = 0; i < watcher->len; i++) {
+        FD_SET(watcher->fds[i], &watcher->read_set);
+        FD_SET(watcher->fds[i], &watcher->error_set);
+    }
+
+    do {
+        retval = select(watcher->highest + 1,
+                        &watcher->read_set,
+                        NULL,
+                        &watcher->error_set,
+                        NULL);
+    } while (retval == -1 && errno == EINTR);
+
+    return retval;
+}
