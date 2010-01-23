@@ -31,6 +31,21 @@ void sigchld(int s)
     exit(0);
 }
 
+int make_domain_socket(const char *path)
+{
+    int sock, retval;
+    struct sockaddr_un addr;
+
+    sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    FORCE(sock != -1, "Unable to create socket for IPC.");
+
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path));
+    retval = bind(sock, (struct sockaddr *)&addr, strlen(path) + sizeof(addr.sun_family));
+    FORCE(retval, "Unable to bind the IPC socket to the filesystem.");
+
+    return sock;
+}
+
 int forkpty(int argc, char **args)
 {
     int pty;
@@ -41,7 +56,7 @@ int forkpty(int argc, char **args)
     pty = posix_openpt(O_RDWR | O_NOCTTY);
     FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
     
-    FORCE(grantpt(pty) && unlockpt(pty), "Unable to release pseudo-terminal.");
+    FORCE(!grantpt(pty) && !unlockpt(pty), "Unable to release pseudo-terminal.");
    
     if(fork() == 0) {
         ptyname = ptsname(pty); 
@@ -78,7 +93,7 @@ void select_loop(int pty, int sock)
     struct watched_fds *watcher = new_watcher();
     char read_buffer[READ_BUFFER_LEN];
 
-    FORCE(listen(sock, 255) == 0, "Unable to listen on socket.");
+    FORCE(listen(sock, 5) == 0, "Unable to listen on socket.");
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
@@ -106,25 +121,14 @@ void select_loop(int pty, int sock)
     }
 }
 
-int make_domain_socket(const char *path)
-{
-    int sock, retval;
-    struct sockaddr_un addr;
-
-    sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    FORCE(sock != -1, "Unable to create socket for IPC.");
-
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path));
-    retval = bind(sock, (struct sockaddr *)&addr, strlen(path) + sizeof(addr.sun_family));
-    FORCE(retval, "Unable to bind the IPC socket to the filesystem.");
-}
-
 const char *USAGE = "Usage: tty-fork <path> <command> [arguments] ...";
 
 int main(int argc, char **argv)
 {
-    if (argc < 2)
+    if (argc < 2) {
         puts(USAGE);
+        exit(1);
+    }
 
     socket_path = argv[1];
     socket_fd   = make_domain_socket(argv[1]);
