@@ -13,6 +13,6 @@ struct watched_fds *new_watcher();
 void free_watcher(struct watched_fds *watcher);
 void watch_fd(struct watched_fds *watcher, int fd);
 int unwatch_fd(struct watched_fds *watcher, int fd);
-void watch_for_data(struct watched_fds *watcher);
+int watch_for_data(struct watched_fds *watcher);
 
 #endif

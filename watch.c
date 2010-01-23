@@ -1,5 +1,8 @@
+#include <stdlib.h>
+#include <errno.h>
 #include <sys/select.h>
 #include "watch.h"
+#include "util.h"
 
 struct watched_fds *new_watcher()
 {
@@ -58,8 +61,8 @@ int unwatch_fd(struct watched_fds *watcher, int fd)
             watcher->len--;
 
             // Make sure the fd is no longer flagged.
-            FD_CLR(&watcher->read_set);
-            FD_CLR(&watcher->error_set);
+            FD_CLR(fd, &watcher->read_set);
+            FD_CLR(fd, &watcher->error_set);
 
             if (watcher->highest == fd) {
                 // Find the new highest file descriptor.
@@ -76,12 +79,13 @@ int unwatch_fd(struct watched_fds *watcher, int fd)
     return 0;
 }
 
-void watch_for_data(struct watched_fds *watcher)
+int watch_for_data(struct watched_fds *watcher)
 {
     unsigned int i;
     int retval = -1;
     
-    FD_ZERO(&watcher->set);
+    FD_ZERO(&watcher->read_set);
+    FD_ZERO(&watcher->error_set);
 
     for(i = 0; i < watcher->len; i++) {
         FD_SET(watcher->fds[i], &watcher->read_set);

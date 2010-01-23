@@ -2,15 +2,12 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
+#include <signal.h>
+#include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/select.h>
-
-#define FORCE(expr, message) if (expr) { \
-    printf("ERROR: %s\n", message);      \
-    exit(1);                             \
-}
+#include "watch.h"
+#include "util.h"
 
 // Terminate when the child process terminates.
 void sig_child(int signal)
@@ -28,7 +25,7 @@ void forkpty(int pty, int argc, char **args)
     pts = open(ptyname, O_RDWR);
     FORCE(pts, "Could not access the terminal slave.");
 
-    if((child = fork) == 0) {
+    if((child = fork()) == 0) {
         // This is the child process. Clone the arguments and call execvp.
         char **argv = malloc(sizeof(char*) * (argc + 1));
 
@@ -41,10 +38,11 @@ void forkpty(int pty, int argc, char **args)
          
         execvp(argv[0], argv);
         FORCE(0, "Unable to execute slave process.");
-    } else signal(SIG_CHLD), sig_child;
+    } else signal(SIGCHLD, sig_child);
 }
 
-#define READ_BUFFER_LEN = 2048;
+// The length of the buffer to read data into.
+#define READ_BUFFER_LEN 2048
 
 void select_loop(int pty, int sock)
 {
@@ -54,7 +52,7 @@ void select_loop(int pty, int sock)
     struct watched_fds *watcher = new_watcher();
     char read_buffer[READ_BUFFER_LEN];
 
-    listen(socket, 255);     // XXX: Invariant.
+    FORCE(listen(sock, 255) == 0, "Unable to listen on socket.");
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
@@ -71,7 +69,7 @@ void select_loop(int pty, int sock)
 
         for (i = 0; i < watcher->len && count > 0; i++) {
             if (FD_ISSET(watcher->fds[i], &watcher->error_set))
-                unwatch_fd(watcher->fds[i]);
+                unwatch_fd(watcher, watcher->fds[i]);
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
                 len = read(watcher->fds[i], read_buffer, READ_BUFFER_LEN);
                 FORCE(len > 0, "Failed read from socket.");
@@ -86,14 +84,14 @@ int main(int argc, char **argv)
 {
     int pty, socket;
 
-    FORCE(isatty(stdout) && isatty(stdin), "Must call tty-fork from a valid tty.");
+    FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
     pty = posix_openpt(O_RDWR | O_NOCTTY);
     FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
     FORCE(grantpt(pty) && unlockpt(pty), "Unable to release pseudo-terminal.");
 
     // XXX: Create the UNIX Domain socket for communication.
     
-    select_loop();
+    select_loop(pty, socket);
     
     return EXIT_SUCCESS;
 }
