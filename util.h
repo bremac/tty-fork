@@ -7,8 +7,10 @@
 
 #define FORCE(expr, message) if (!(expr)) { \
     printf("ERROR: %s\n", message);         \
-    perror(NULL);                           \
+    if(errno != 0) perror(NULL);            \
     exit(1);                                \
 }
+
+size_t transfer(int from_fd, int to_fd);
 
 #endif

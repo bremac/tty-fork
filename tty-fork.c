@@ -32,7 +32,7 @@ void sigexit(int s)
     exit(EXIT_SUCCESS);
 }
 
-int make_domain_socket(const char *path)
+int make_domain_server(const char *path)
 {
     int sock, retval;
     struct sockaddr_un addr;
@@ -86,6 +86,7 @@ int forkpty(int argc, char **args)
 //        FORCE(pgroup > -1, "Could not create a new session.");
 //        FORCE(tcsetpgrp(0, pgroup) != -1, "Could not set the process to the foreground.");
 
+        // XXX: Duplicate the settings of the master terminal, less the echo.
         tc.c_lflag = ISIG | ICANON | ECHOE | ECHOK | /*ECHOCTL | ECHOKE |*/ IEXTEN;
         tc.c_oflag = TABDLY | OPOST;
         tc.c_iflag = BRKINT | IGNPAR | ISTRIP | ICRNL | IXON | IMAXBEL;
@@ -108,16 +109,11 @@ int forkpty(int argc, char **args)
     return pty;
 }
 
-// The length of the buffer to read data into.
-#define READ_BUFFER_LEN 2048
-
 void select_loop(int pty, int sock)
 {
     int count, new_fd;
     unsigned int i;
-    size_t len;
     struct watched_fds *watcher = new_watcher();
-    char read_buffer[READ_BUFFER_LEN];
 
     watch_fd(watcher, STDIN_FILENO);
     watch_fd(watcher, pty);
@@ -140,10 +136,7 @@ void select_loop(int pty, int sock)
                 unwatch_fd(watcher, watcher->fds[i]);
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
                 // XXX: Handle EOF gracefully (send it and continue working.)
-                len = read(watcher->fds[i], read_buffer, READ_BUFFER_LEN);
-                FORCE(len > 0, "Failed read from socket.");
-                len = write(pty, read_buffer, len);
-                FORCE(len > 0, "Failed write to terminal.");
+                FORCE(!transfer(watcher->fds[i], pty), "Unable to transfer IO.");
             }
         }
     }
@@ -159,7 +152,7 @@ int main(int argc, char **argv)
     }
 
     socket_path = argv[1];
-    socket_fd   = make_domain_socket(argv[1]);
+    socket_fd   = make_domain_server(argv[1]);
     pty_fd      = forkpty(argc - 2, argv + 2); // Skip the command and socket path.
 
     atexit(cleanup);
