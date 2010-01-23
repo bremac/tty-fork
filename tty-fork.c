@@ -53,6 +53,7 @@ int make_domain_server(const char *path)
 int forkpty(int argc, char **args)
 {
     int pty;
+    int child;
     
     FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
     
@@ -60,9 +61,10 @@ int forkpty(int argc, char **args)
     FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
     
     FORCE(!grantpt(pty) && !unlockpt(pty), "Unable to release pseudo-terminal.");
-  
-    // XXX: Catch errors when forking. 
-    if(fork() == 0) {
+ 
+    FORCE((child = fork()) != -1, "Unable to fork the child process.");
+
+    if(child == 0) {
         // This is the child process. Clone the arguments and call execvp.
         char **argv = malloc(sizeof(char*) * (argc + 1));
         char *ptyname;
@@ -84,6 +86,10 @@ int forkpty(int argc, char **args)
         FORCE(pty, "Could not access the terminal slave.");
         
         dup2(pty, STDIN_FILENO); // Replace stdin with the pseudo-tty.
+
+        // XXX: How can we capture configuration changes on the slave terminal
+        //      so that they are reflected on the master? Ex. setting slaves
+        //      up to properly handle ncurses, etc.
 
 //        pgroup = setsid();
 //        FORCE(pgroup > -1, "Could not create a new session.");
@@ -128,8 +134,8 @@ void select_loop(int pty, int sock)
                    count--;
          
         if (FD_ISSET(sock, &watcher->read_set)) {
-            // XXX: Handle errors on accepting.
             new_fd = accept(sock, NULL, NULL);
+            FORCE(new_fd != -1, "Unable to accept IPC connections.");
             watch_fd(watcher, new_fd);
             UNFLAG(sock);
         }
@@ -178,7 +184,6 @@ int main(int argc, char **argv)
     atexit(cleanup);
      
     select_loop(pty_fd, socket_fd);
-    // XXX: Should not be reached.
 
     exit(EXIT_SUCCESS);
 }
