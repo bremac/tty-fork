@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE // Allow us to fully access the necessary PTY functions.
+#define _XOPEN_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -14,8 +14,8 @@
 
 // Maintain these variables globally so that we can gracefully exit when
 // we receive SIGCHLD. Otherwise, a FORCE'd invariant could trigger before
-// the cleanup code is reached, causing the code to apparently exit with
-// an error.
+// the cleanup code is reached, causing the domain sockets to remain on the
+// filesystem, and terminal settings to remain incorrect.
 const char *socket_path = NULL;
 int         socket_fd   = -1;
 int         pty_fd      = -1;
@@ -26,7 +26,8 @@ void cleanup()
     close(pty_fd);
     close(socket_fd);    // Ensure we can unlink the socket.
     unlink(socket_path); // Prevent invalid dangling files.
-    tcsetattr(STDOUT_FILENO, TCSANOW, &tty_orig);
+    tcsetattr(STDOUT_FILENO, TCSANOW, &tty_orig); // Reset the tty.
+    puts("");            // Insert a newline to make things neater.
 }
 
 void sigexit(int s)
@@ -149,7 +150,12 @@ void select_loop(int pty, int sock)
         if(FD_ISSET(pty, &watcher->read_set)) {
             int ret = transfer_mapped(write_crnl, pty, STDOUT_FILENO);
 
-            FORCE(ret != -1, "Unable to write to STDOUT.");
+            // Sometimes the tty gets flagged for reading when the child exits,
+            // but the read fails (ex. python.) Exit silently, because thus
+            // far it hasn't occurred in an actual erroneous case, and just
+            // prints noise to the terminal.
+            if (ret == -1) exit(EXIT_SUCCESS);
+
             UNFLAG(pty);
         }
 
