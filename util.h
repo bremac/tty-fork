@@ -11,7 +11,6 @@ if (!(expr)) {                                           \
     write_crnl(STDERR_FILENO, "ERROR: ", 7);             \
     write_crnl(STDERR_FILENO, message, strlen(message)); \
     write_crnl(STDERR_FILENO, "\n", 1);                  \
-    if(errno != 0) perror(NULL);                         \
     exit(1);                                             \
 }
 
