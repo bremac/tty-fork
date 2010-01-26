@@ -19,12 +19,14 @@
 const char *socket_path = NULL;
 int         socket_fd   = -1;
 int         pty_fd      = -1;
+struct termios tty_orig;
 
 void cleanup()
 {
     close(pty_fd);
     close(socket_fd);    // Ensure we can unlink the socket.
     unlink(socket_path); // Prevent invalid dangling files.
+    tcsetattr(STDOUT_FILENO, TCSANOW, &tty_orig);
 }
 
 void sigexit(int s)
@@ -54,6 +56,7 @@ int forkpty(int argc, char **args)
 {
     int pty;
     int child;
+    struct termios tc;
     
     FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
     
@@ -61,19 +64,14 @@ int forkpty(int argc, char **args)
     FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
     
     FORCE(!grantpt(pty) && !unlockpt(pty), "Unable to release pseudo-terminal.");
- 
+
     FORCE((child = fork()) != -1, "Unable to fork the child process.");
 
-    if(child == 0) {
+    if (child == 0) {
         // This is the child process. Clone the arguments and call execvp.
         char **argv = malloc(sizeof(char*) * (argc + 1));
         char *ptyname;
-        int pgroup;
-        struct termios tc;
 
-        // Duplicate the master terminal's settings.
-        tcgetattr(STDIN_FILENO, &tc);
-        
         FORCE(argv != NULL, "Unable to allocate memory.");
         memmove(argv, args, sizeof(char*) * argc);
         argv[argc] = NULL; // Null-terminate the vector of arguments.
@@ -81,24 +79,24 @@ int forkpty(int argc, char **args)
         ptyname = ptsname(pty); 
         FORCE(ptyname != NULL, "Could not open a pseudo-terminal slave.");
         close(pty);
+        
+        // Give the child process control. We need to do this before opening
+        // the terminal so that it becomes the controlling terminal.
+        FORCE(setsid() != -1, "Unable to create a new session.");
 
         pty = open(ptyname, O_RDWR);
         FORCE(pty, "Could not access the terminal slave.");
         
-        dup2(pty, STDIN_FILENO); // Replace stdin with the pseudo-tty.
+        // Make the pseudo-terminal mimic the master, plus echo.
+        tcgetattr(STDOUT_FILENO, &tc);
+        tc.c_lflag = ECHO;         // Many applications appear to expect this.
+        tcsetattr(pty, TCSANOW, &tc);
+        
+        // Replace std fds with the pseudo-tty.
+        dup2(pty, STDIN_FILENO);
+        dup2(pty, STDOUT_FILENO);
+        dup2(pty, STDERR_FILENO);
 
-        // XXX: How can we capture configuration changes on the slave terminal
-        //      so that they are reflected on the master? Ex. setting slaves
-        //      up to properly handle ncurses, etc.
-
-//        pgroup = setsid();
-//        FORCE(pgroup > -1, "Could not create a new session.");
-//        FORCE(tcsetpgrp(0, pgroup) != -1, "Could not set the process to the foreground.");
-
-        // Make the pseudo-terminal mimic the master, minus any echo.
-        tc.c_lflag &= ~ECHO;
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &tc);
-         
         execvp(argv[0], argv);
         FORCE(0, "Unable to execute slave process.");
     } else {
@@ -110,6 +108,22 @@ int forkpty(int argc, char **args)
         signal(SIGILL,  sigexit);
         signal(SIGINT,  sigexit);
     }
+
+    // Save the original tty settings.
+    tcgetattr(STDOUT_FILENO, &tty_orig);
+    
+    // Put our TTY in raw mode: (We will manually convert NL to CRNL.)
+    tcgetattr(STDOUT_FILENO, &tc);
+    tc.c_iflag = 0;
+    tc.c_lflag = 0;
+    tc.c_oflag = 0;
+    tcsetattr(STDOUT_FILENO, TCSANOW, &tc);
+
+    tcgetattr(pty, &tc);
+    tc.c_iflag = 0;
+    tc.c_lflag = 0;
+    tc.c_oflag = 0;
+    tcsetattr(pty, TCSANOW, &tc);
 
     return pty;
 }
@@ -125,14 +139,20 @@ void select_loop(int pty, int sock)
     watch_fd(watcher, sock);
 
     while ((count = watch_for_data(watcher))) {
+#define UNFLAG(fd)                   \
+    FD_CLR(fd, &watcher->error_set); \
+    FD_CLR(fd, &watcher->read_set);  \
+    count--;
+         
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
         FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
-        FORCE(!FD_ISSET(pty, &watcher->read_set),   "Terminal connection with data!?");
+        if(FD_ISSET(pty, &watcher->read_set)) {
+            int ret = transfer_mapped(write_crnl, pty, STDOUT_FILENO);
 
-#define UNFLAG(fd) FD_CLR(fd, &watcher->error_set); \
-                   FD_CLR(fd, &watcher->read_set);  \
-                   count--;
-         
+            FORCE(ret != -1, "Unable to write to STDOUT.");
+            UNFLAG(pty);
+        }
+
         if (FD_ISSET(sock, &watcher->read_set)) {
             new_fd = accept(sock, NULL, NULL);
             FORCE(new_fd != -1, "Unable to accept IPC connections.");
@@ -147,9 +167,7 @@ void select_loop(int pty, int sock)
             }
             
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
-                int ret = transfer(watcher->fds[i],
-                                   pty,
-                                   watcher->fds[i] != STDIN_FILENO);
+                int ret = transfer_mapped(write_cr, watcher->fds[i], pty);
 
                 FORCE(ret != -1, "Unable to transfer IO.");
                 
