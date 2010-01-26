@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include "util.h"
 
-
 ssize_t write_crnl(int to_fd, char *buffer, ssize_t len)
 {
     char *newline;

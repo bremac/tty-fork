@@ -15,7 +15,8 @@ int make_domain_client(const char *path)
 
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, path, sizeof(addr.sun_path));
-    retval = connect(sock, (struct sockaddr *)&addr, strlen(path) + sizeof(addr.sun_family));
+    retval = connect(sock, (struct sockaddr *)&addr, strlen(path) +
+                            sizeof(addr.sun_family));
     FORCE(!retval, "Unable to connect to the IPC socket on the filesystem.");
 
     return sock;
@@ -27,7 +28,7 @@ int main(int argc, char **argv)
 {
     int socket;
 
-    if (argc < 2) {
+    if (argc != 2) {
         puts(USAGE);
         exit(1);
     }
