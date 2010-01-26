@@ -88,9 +88,13 @@ int forkpty(int argc, char **args)
         pty = open(ptyname, O_RDWR);
         FORCE(pty, "Could not access the terminal slave.");
         
-        // Make the pseudo-terminal mimic the master, plus echo.
-        tcgetattr(STDOUT_FILENO, &tc);
-        tc.c_lflag = ECHO;         // Many applications appear to expect this.
+        // Make the pseudo-terminal mimic what most slave programs assume to
+        // be the default; those requiring more control will change these
+        // flags themselves.
+        tcgetattr(pty, &tc);
+        tc.c_iflag |= (IXON|INLCR|ICRNL);
+        tc.c_lflag |= (ECHO|ECHOE|ECHOK|ISIG|IEXTEN|ICANON);
+        tc.c_oflag |= (OPOST|OCRNL);
         tcsetattr(pty, TCSANOW, &tc);
         
         // Replace std fds with the pseudo-tty.
