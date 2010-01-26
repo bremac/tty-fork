@@ -34,7 +34,7 @@ int main(int argc, char **argv)
 
     socket = make_domain_client(argv[1]);
 
-    while(transfer_mapped((tty_writer)write, STDIN_FILENO, socket) > 0) ;   
+    while(transfer_mapped(safe_write, STDIN_FILENO, socket) > 0) ;   
 
     return EXIT_SUCCESS;
 }

@@ -4,38 +4,44 @@
 #include <unistd.h>
 #include "util.h"
 
-// Transfer data while transforming \n to \n\r.
+
 ssize_t write_crnl(int to_fd, char *buffer, ssize_t len)
 {
-    ssize_t ret;
-    char *end;
+    char *newline;
+    ssize_t r, retval = 0;
     ssize_t count, offset = 0;
     
-    do {
-        count = len - offset;
-        end   = memchr(buffer + offset, '\n', count);
+    for(offset = 0; offset < len; offset += count) {
+        // Set the number of characters to write to the number
+        // of characters remaining in the buffer.
+        count   = len - offset;
+        newline = memchr(buffer + offset, '\n', count);
 
-        // XXX: Check for off-by-one.
-        if (end) count = end - buffer - offset + 1;
+        // Ensure that we write no further than any newline characters.
+        if (newline) {
+            // Use how far the newline lies beyond the current offset
+            // in the buffer, plus one to include the nl.
+            count = newline - buffer - offset + 1;
+        }
 
-        // Write the data out up until the next newline.
-        while((ret = write(to_fd, buffer + offset, count)) == -1 &&
-              errno == EINTR) ;
+#define WRITE_OR_FAIL(f, b, l) {  \
+        r = safe_write(f, b, l);  \
+        if (r == -1) return r;    \
+        else         retval += r; \
+}
 
-        // Write out any required carraige returns to the FD.
-        while(end && (ret = write(to_fd, "\r", 1)) == -1 &&
-              errno == EINTR) ;
+        WRITE_OR_FAIL(to_fd, buffer + offset, count);
 
-        offset += count;
-    } while(offset < len && ret != -1);
+        if (newline) WRITE_OR_FAIL(to_fd, "\r", 1);
+#undef WRITE_OR_FAIL
+    }
     
-    return ret;
+    return retval;
 }
 
 // Transfer data while transforming \n to \r.
 ssize_t write_cr(int to_fd, char *buffer, ssize_t len)
 {
-    ssize_t ret;
     ssize_t count;
     char *newline = buffer;
 
@@ -45,10 +51,7 @@ ssize_t write_cr(int to_fd, char *buffer, ssize_t len)
         count = len - (newline - buffer);
     }
     
-    while((ret = write(to_fd, buffer, len)) == -1 &&
-          errno == EINTR) ;
-
-    return ret;
+    return safe_write(to_fd, buffer, len);
 }
 
 // Use a preprocessor constant to keep gcc from complaining.
