@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <termios.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include "watch.h"
 #include "util.h"
 
@@ -33,24 +32,6 @@ void cleanup()
 void sigexit(int s)
 {
     exit(EXIT_SUCCESS);
-}
-
-int make_domain_server(const char *path)
-{
-    int sock, retval;
-    struct sockaddr_un addr;
-
-    sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    FORCE(sock != -1, "Unable to create socket for IPC.");
-
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path));
-    retval = bind(sock, (struct sockaddr *)&addr, strlen(path) + sizeof(addr.sun_family));
-    FORCE(!retval, "Unable to bind the IPC socket to the filesystem.");
-
-    FORCE(!listen(sock, 5), "Unable to listen on socket.");
-
-    return sock;
 }
 
 int forkpty(int argc, char **args)
@@ -135,41 +116,39 @@ int forkpty(int argc, char **args)
 
 void select_loop(int pty, int sock)
 {
-    int count, new_fd;
     unsigned int i;
-    struct watched_fds *watcher = new_watcher();
+    struct watched_fds *watcher = new_watcher(8);
 
     watch_fd(watcher, STDIN_FILENO);
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
-    while ((count = watch_for_data(watcher))) {
+// Macro to unset the associated flag bits of a FD.
 #define UNFLAG(fd)                   \
     FD_CLR(fd, &watcher->error_set); \
     FD_CLR(fd, &watcher->read_set);  \
-    count--;
-         
+
+    while (watch_for_data(watcher) != -1) {
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
         FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
+        
         if(FD_ISSET(pty, &watcher->read_set)) {
             transfer_mapped(write_crnl, pty, STDOUT_FILENO);
 
-            // Sometimes the tty gets flagged for reading when the child exits,
-            // but the read fails (ex. python.) Fail silently, because thus
-            // far it hasn't occurred in an actual erroneous case, and just
-            // prints noise to the terminal.
+            // Sometimes reads from the tty fail when programs do strange
+            // things with it, but these cases can be safely ignored.
 
             UNFLAG(pty);
         }
 
         if (FD_ISSET(sock, &watcher->read_set)) {
-            new_fd = accept(sock, NULL, NULL);
+            int new_fd = accept(sock, NULL, NULL);
             FORCE(new_fd != -1, "Unable to accept IPC connections.");
             watch_fd(watcher, new_fd);
             UNFLAG(sock);
         }
 
-        for (i = 0; i < watcher->len && count > 0; i++) {
+        for (i = 0; i < watcher->len; i++) {
             if (FD_ISSET(watcher->fds[i], &watcher->error_set)) {
                 unwatch_fd(watcher, watcher->fds[i]);
                 UNFLAG(watcher->fds[i]);
@@ -188,13 +167,18 @@ void select_loop(int pty, int sock)
 
                     // If the only fds left are the master socket and the
                     // pseudo-terminal, then we're done.
-                    if (watcher->len == 2) exit(EXIT_SUCCESS);
+                    if (watcher->len == 2)
+                        exit(EXIT_SUCCESS);
+
+                    i--; // Repeat the loop at this position, as a new fd
+                         // is now in the place of the deleted one.
                 }
+
                 UNFLAG(watcher->fds[i]);
             }
         }
-#undef UNFLAG
     }
+#undef UNFLAG
 }
 
 const char *USAGE = "Usage: tty-fork <path> <command> [arguments] ...";
