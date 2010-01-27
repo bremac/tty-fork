@@ -38,7 +38,6 @@ ssize_t write_crnl(int to_fd, char *buffer, ssize_t len)
     return retval;
 }
 
-// Transfer data while transforming \n to \r.
 ssize_t write_cr(int to_fd, char *buffer, ssize_t len)
 {
     ssize_t count;
@@ -54,7 +53,7 @@ ssize_t write_cr(int to_fd, char *buffer, ssize_t len)
 }
 
 // Use a preprocessor constant to keep gcc from complaining.
-#define READ_BUFFER_LEN 2048
+#define READ_BUFFER_LEN 64
 
 ssize_t transfer_mapped(tty_writer do_write, int from_fd, int to_fd)
 {

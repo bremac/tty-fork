@@ -12,6 +12,9 @@
 #include "watch.h"
 #include "util.h"
 
+// Why does this sometimes die after running some commands in bash,
+// running stty -a, and then beginning to type 'exit'?
+
 // Maintain these variables globally so that we can gracefully exit when
 // we receive SIGCHLD. Otherwise, a FORCE'd invariant could trigger before
 // the cleanup code is reached, causing the domain sockets to remain on the
@@ -152,13 +155,12 @@ void select_loop(int pty, int sock)
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
         FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
         if(FD_ISSET(pty, &watcher->read_set)) {
-            int ret = transfer_mapped(write_crnl, pty, STDOUT_FILENO);
+            transfer_mapped(write_crnl, pty, STDOUT_FILENO);
 
             // Sometimes the tty gets flagged for reading when the child exits,
-            // but the read fails (ex. python.) Exit silently, because thus
+            // but the read fails (ex. python.) Fail silently, because thus
             // far it hasn't occurred in an actual erroneous case, and just
             // prints noise to the terminal.
-            if (ret == -1) exit(EXIT_SUCCESS);
 
             UNFLAG(pty);
         }
@@ -177,12 +179,14 @@ void select_loop(int pty, int sock)
             }
             
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
+                // Incoming newlines from the Unix Domain sockets need to be
+                // transformed into carriage returns for processing by the pty.
                 int ret = transfer_mapped(write_cr, watcher->fds[i], pty);
 
                 FORCE(ret != -1, "Unable to transfer IO.");
                 
                 if (!ret) { // We have reached end-of-file.
-                    close(watcher->fds[i]);               // Invalidate the fd.
+                    close(watcher->fds[i]);
                     unwatch_fd(watcher, watcher->fds[i]);
 
                     // If the only fds left are the master socket and the
