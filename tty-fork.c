@@ -73,7 +73,7 @@ int forkpty(int argc, char **args)
         // be the default; those requiring more control will change these
         // flags themselves.
         tcgetattr(pty, &tc);
-        tc.c_iflag |= (IXON|INLCR|ICRNL);
+        tc.c_iflag |= (IXON|ICRNL);
         tc.c_lflag |= (ECHO|ECHOE|ECHOK|ISIG|IEXTEN|ICANON);
         tc.c_oflag |= (OPOST|OCRNL);
         tcsetattr(pty, TCSANOW, &tc);
