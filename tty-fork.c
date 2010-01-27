@@ -35,6 +35,8 @@ void sigexit(int s)
 }
 
 // XXX: Check for failure of tc(g|s)setattr.
+// XXX: Properly set the character correspondences (ie. ERASE) on the slave.
+// XXX: Consider using ioctl to set the window size of the slave.
 
 void set_tty_raw(int fd)
 {
