@@ -12,9 +12,6 @@
 #include "watch.h"
 #include "util.h"
 
-// Why does this sometimes die after running some commands in bash,
-// running stty -a, and then beginning to type 'exit'?
-
 // Maintain these variables globally so that we can gracefully exit when
 // we receive SIGCHLD. Otherwise, a FORCE'd invariant could trigger before
 // the cleanup code is reached, causing the domain sockets to remain on the
