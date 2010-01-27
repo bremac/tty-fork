@@ -83,7 +83,7 @@ ssize_t write_crnl(int to_fd, char *buffer, ssize_t len)
 
 ssize_t write_cr(int to_fd, char *buffer, ssize_t len)
 {
-    ssize_t count;
+    ssize_t count = len;
     char *newline = buffer;
 
     // Transform all of the newlines to carriage returns.
