@@ -34,11 +34,23 @@ void sigexit(int s)
     exit(EXIT_SUCCESS);
 }
 
+// XXX: Check for failure of tc(g|s)setattr.
+
+void set_tty_raw(int fd)
+{
+    struct termios tc;
+
+    tcgetattr(fd, &tc);
+    tc.c_iflag = 0;
+    tc.c_lflag = 0;
+    tc.c_oflag = 0;
+    tcsetattr(fd, TCSANOW, &tc);
+}
+
 int forkpty(int argc, char **args)
 {
     int pty;
     int child;
-    struct termios tc;
     
     FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
     
@@ -50,9 +62,10 @@ int forkpty(int argc, char **args)
     FORCE((child = fork()) != -1, "Unable to fork the child process.");
 
     if (child == 0) {
-        // This is the child process. Clone the arguments and call execvp.
-        char **argv = malloc(sizeof(char*) * (argc + 1));
+        // Clone the arguments and call execvp.
+        struct termios tc;
         char *ptyname;
+        char **argv = malloc(sizeof(char*) * (argc + 1));
 
         FORCE(argv != NULL, "Unable to allocate memory.");
         memmove(argv, args, sizeof(char*) * argc);
@@ -99,17 +112,8 @@ int forkpty(int argc, char **args)
     tcgetattr(STDOUT_FILENO, &tty_orig);
     
     // Put our TTY in raw mode: (We will manually convert NL to CRNL.)
-    tcgetattr(STDOUT_FILENO, &tc);
-    tc.c_iflag = 0;
-    tc.c_lflag = 0;
-    tc.c_oflag = 0;
-    tcsetattr(STDOUT_FILENO, TCSANOW, &tc);
-
-    tcgetattr(pty, &tc);
-    tc.c_iflag = 0;
-    tc.c_lflag = 0;
-    tc.c_oflag = 0;
-    tcsetattr(pty, TCSANOW, &tc);
+    set_tty_raw(STDOUT_FILENO);
+    set_tty_raw(pty);
 
     return pty;
 }
@@ -126,7 +130,7 @@ void select_loop(int pty, int sock)
 // Macro to unset the associated flag bits of a FD.
 #define UNFLAG(fd)                   \
     FD_CLR(fd, &watcher->error_set); \
-    FD_CLR(fd, &watcher->read_set);  \
+    FD_CLR(fd, &watcher->read_set);
 
     while (watch_for_data(watcher) != -1) {
         FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
