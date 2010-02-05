@@ -2,14 +2,16 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <signal.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <termios.h>
 #include <sys/socket.h>
-#include "watch.h"
+#include "error.h"
 #include "util.h"
+#include "watch.h"
 
 // Maintain these variables globally so that we can gracefully exit when
 // we receive SIGCHLD. Otherwise, a FORCE'd invariant could trigger before
@@ -54,14 +56,14 @@ int forkpty(int argc, char **args)
     int pty;
     int child;
     
-    FORCE(isatty(0) && isatty(1), "Must call tty-fork from a valid tty.");
+    FORCE(isatty(0) && isatty(1), ERR_NO_TTY);
     
     pty = posix_openpt(O_RDWR | O_NOCTTY);
-    FORCE(pty != -1, "Unable to open a new pseudo-terminal.");
+    FORCE(pty != -1, ERR_NO_PTY);
     
-    FORCE(!grantpt(pty) && !unlockpt(pty), "Unable to release pseudo-terminal.");
+    FORCE(!grantpt(pty) && !unlockpt(pty), ERR_NO_PTY);
 
-    FORCE((child = fork()) != -1, "Unable to fork the child process.");
+    FORCE((child = fork()) != -1, ERR_NO_FORK);
 
     if (child == 0) {
         // Clone the arguments and call execvp.
@@ -69,20 +71,20 @@ int forkpty(int argc, char **args)
         char *ptyname;
         char **argv = malloc(sizeof(char*) * (argc + 1));
 
-        FORCE(argv != NULL, "Unable to allocate memory.");
+        FORCE(argv != NULL, ERR_NO_MEMORY);
         memmove(argv, args, sizeof(char*) * argc);
         argv[argc] = NULL; // Null-terminate the vector of arguments.
 
         ptyname = ptsname(pty); 
-        FORCE(ptyname != NULL, "Could not open a pseudo-terminal slave.");
+        FORCE(ptyname != NULL, ERR_NO_PTY); // What happens to the parent here?
         close(pty);
         
         // Give the child process control. We need to do this before opening
         // the terminal so that it becomes the controlling terminal.
-        FORCE(setsid() != -1, "Unable to create a new session.");
+        FORCE(setsid() != -1, ERR_NO_SESSION);
 
         pty = open(ptyname, O_RDWR);
-        FORCE(pty, "Could not access the terminal slave.");
+        FORCE(pty, ERR_NO_PTY);
         
         // Make the pseudo-terminal mimic what most slave programs assume to
         // be the default; those requiring more control will change these
@@ -99,7 +101,7 @@ int forkpty(int argc, char **args)
         dup2(pty, STDERR_FILENO);
 
         execvp(argv[0], argv);
-        FORCE(0, "Unable to execute slave process.");
+        FORCE(0, ERR_NO_EXEC);
     } else {
         signal(SIGCHLD, sigexit);
         signal(SIGABRT, sigexit);
@@ -129,14 +131,9 @@ void select_loop(int pty, int sock)
     watch_fd(watcher, pty);
     watch_fd(watcher, sock);
 
-// Macro to unset the associated flag bits of a FD.
-#define UNFLAG(fd)                   \
-    FD_CLR(fd, &watcher->error_set); \
-    FD_CLR(fd, &watcher->read_set);
-
     while (watch_for_data(watcher) != -1) {
-        FORCE(!FD_ISSET(sock, &watcher->error_set), "Server connection lost.");
-        FORCE(!FD_ISSET(pty, &watcher->error_set),  "Terminal connection lost.");
+        FORCE(!FD_ISSET(sock, &watcher->error_set), ERR_IO_ERROR); // No server.
+        FORCE(!FD_ISSET(pty, &watcher->error_set),  ERR_IO_ERROR); // No terminal.
         
         if(FD_ISSET(pty, &watcher->read_set)) {
             transfer_mapped(write_crnl, pty, STDOUT_FILENO);
@@ -144,20 +141,21 @@ void select_loop(int pty, int sock)
             // Sometimes reads from the tty fail when programs do strange
             // things with it, but these cases can be safely ignored.
 
-            UNFLAG(pty);
+            unflag_fd(watcher, pty);
         }
 
         if (FD_ISSET(sock, &watcher->read_set)) {
-            int new_fd = accept(sock, NULL, NULL);
-            FORCE(new_fd != -1, "Unable to accept IPC connections.");
+            int new_fd;
+            while((new_fd = accept(sock, NULL, NULL)) == -1 && errno == EINTR) ;
+            FORCE(new_fd != -1 || errno == ECONNABORTED, ERR_NO_ACCEPT);
             watch_fd(watcher, new_fd);
-            UNFLAG(sock);
+            unflag_fd(watcher, sock);
         }
 
         for (i = 0; i < watcher->len; i++) {
             if (FD_ISSET(watcher->fds[i], &watcher->error_set)) {
                 unwatch_fd(watcher, watcher->fds[i]);
-                UNFLAG(watcher->fds[i]);
+                unflag_fd(watcher, watcher->fds[i]);
             }
             
             if (FD_ISSET(watcher->fds[i], &watcher->read_set)) {
@@ -165,7 +163,7 @@ void select_loop(int pty, int sock)
                 // transformed into carriage returns for processing by the pty.
                 int ret = transfer_mapped(write_cr, watcher->fds[i], pty);
 
-                FORCE(ret != -1, "Unable to transfer IO.");
+                FORCE(ret != -1, ERR_IO_ERROR);
                 
                 if (!ret) { // We have reached end-of-file.
                     close(watcher->fds[i]);
@@ -180,11 +178,10 @@ void select_loop(int pty, int sock)
                          // is now in the place of the deleted one.
                 }
 
-                UNFLAG(watcher->fds[i]);
+                unflag_fd(watcher, watcher->fds[i]);
             }
         }
     }
-#undef UNFLAG
 }
 
 const char *USAGE = "Usage: tty-fork <path> <command> [arguments] ...";
@@ -198,6 +195,7 @@ int main(int argc, char **argv)
 
     socket_path = argv[1];
     socket_fd   = make_domain_server(argv[1]);
+    FORCE(socket_fd != -1, ERR_NO_UDSERVER);
     pty_fd      = forkpty(argc - 2, argv + 2); // Skip the command and socket path.
 
     atexit(cleanup);

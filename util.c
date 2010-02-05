@@ -7,41 +7,41 @@
 #include "util.h"
 
 const unsigned int SOCKET_BACKLOG = 32;
+typedef int (*socket_initializer)(int, const struct sockaddr*, socklen_t);
 
-int make_domain_server(const char *path)
+int make_domain_socket(const char *path, socket_initializer init_sock)
 {
-    int sock, retval;
+    int sock;
     struct sockaddr_un addr;
 
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    FORCE(sock != -1, "Unable to create socket for IPC.");
+
+    if(sock == -1)
+        return -1;
 
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, path, sizeof(addr.sun_path));
-    retval = bind(sock, (struct sockaddr *)&addr, strlen(path) +
-                                                  sizeof(addr.sun_family));
-    FORCE(!retval, "Unable to bind the IPC socket to the filesystem.");
 
-    FORCE(!listen(sock, SOCKET_BACKLOG), "Unable to listen on socket.");
+    if(init_sock(sock, (struct sockaddr *)&addr,
+                 strlen(path) + sizeof(addr.sun_family)) != 0)
+        return -1;
+
+    return sock;
+}
+
+int make_domain_server(const char *path)
+{
+    int sock = make_domain_socket(path, bind);
+
+    if(sock == -1 || listen(sock, SOCKET_BACKLOG) != 0)
+        return -1;
 
     return sock;
 }
 
 int make_domain_client(const char *path)
 {
-    int sock, retval;
-    struct sockaddr_un addr;
-
-    sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    FORCE(sock != -1, "Unable to create socket for IPC.");
-
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path));
-    retval = connect(sock, (struct sockaddr *)&addr, strlen(path) +
-                                                     sizeof(addr.sun_family));
-    FORCE(!retval, "Unable to connect to the IPC socket on the filesystem.");
-
-    return sock;
+    return make_domain_socket(path, connect);
 }
 
 ssize_t write_crnl(int to_fd, char *buffer, ssize_t len)

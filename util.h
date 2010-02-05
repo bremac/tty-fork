@@ -6,12 +6,12 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Create a Unix Domain socket bound to the given path. Note that    *
- * this can cause the program to exit with an error if it fails.     */
+/* Create and return a Unix Domain socket bound to the given path.   *
+ * Returns -1 if any part of this action fails.                      */
 int make_domain_server(const char *path);
 
-/* Connect to a Unix Domain socket bound to the given path. Note     *
- * that this can cause the program to exit with an error on failure. */
+/* Return a socket connected to a Unix Domain socket bound to the    *
+ * given path. Returns -1 if any action fails.                       */
 int make_domain_client(const char *path);
 
 /* Perform a unistd-style write operation, covering up interruptions *

@@ -32,4 +32,9 @@ void unwatch_fd(struct watched_fds *watcher, int fd);
  * may be flagged for the same fd), or -1 if an error occurred.    */
 int watch_for_data(struct watched_fds *watcher);
 
+static inline void unflag_fd(struct watched_fds *watcher, int fd) {
+    FD_CLR(fd, &watcher->error_set);
+    FD_CLR(fd, &watcher->read_set);
+}
+
 #endif
