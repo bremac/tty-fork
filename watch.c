@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <sys/select.h>
 #include <assert.h>
+#include "error.h"
 #include "watch.h"
 #include "util.h"
 
@@ -9,7 +10,7 @@ struct watched_fds *new_watcher(unsigned len)
 {
     struct watched_fds *watcher = malloc(sizeof(struct watched_fds));
 
-    FORCE(watcher != NULL, "Unable to allocate memory.");
+    FORCE(watcher != NULL, ERR_NO_MEMORY);
     
     FD_ZERO(&watcher->read_set);
     FD_ZERO(&watcher->error_set);
@@ -19,7 +20,7 @@ struct watched_fds *new_watcher(unsigned len)
     watcher->highest = -1;
     watcher->fds = malloc(sizeof(int) * watcher->max);
 
-    FORCE(watcher->fds != NULL, "Unable to allocate memory.");
+    FORCE(watcher->fds != NULL, ERR_NO_MEMORY);
 
     return watcher;
 }
@@ -38,7 +39,7 @@ void watch_fd(struct watched_fds *watcher, int fd)
         assert(watcher->max > watcher->len);
 
         watcher->fds = realloc(watcher->fds, sizeof(int) * watcher->max);
-        FORCE(watcher->fds != NULL, "Unable to allocate memory.");
+        FORCE(watcher->fds != NULL, ERR_NO_MEMORY);
     }
 
     watcher->fds[watcher->len] = fd;
