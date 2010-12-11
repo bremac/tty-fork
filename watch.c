@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <assert.h>
 #include "watch.h"
 #include "util.h"
 
