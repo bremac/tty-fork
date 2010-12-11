@@ -31,14 +31,13 @@ void free_watcher(struct watched_fds *watcher)
 
 void watch_fd(struct watched_fds *watcher, int fd)
 {
-    int *fds;
-
     // Allocate more space if we need it.
     if(watcher->len >= watcher->max) {
         watcher->max *= 2;
-        fds = malloc(sizeof(int) * watcher->max);
-        
-        FORCE(fds != NULL, "Unable to allocate memory.");
+        assert(watcher->max > watcher->len);
+
+        watcher->fds = realloc(watcher->fds, sizeof(int) * watcher->max);
+        FORCE(watcher->fds != NULL, "Unable to allocate memory.");
     }
 
     watcher->fds[watcher->len] = fd;
